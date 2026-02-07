@@ -1,10 +1,14 @@
 from email.policy import default
+from matplotlib import dates
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import pytz
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
+from ephemData import getSunData
+import holidays 
 
 # =========================
 # CONFIGURACIÓN
@@ -48,37 +52,63 @@ def get_indicator(indicator_id, date_range):
     return df
 
 # =========================
-# DESCARGA DE DATOS
-# Rango temporal de analisis hoy menos 5 dias y 10 dias en futuro
+# Rango temporal de analisis hoy menos 5 dias y hoy mas 10 dias en futuro
 # =========================
-
 start_date = today + timedelta(days=-5)
 end_date = today + timedelta(days=10)
+
+# Para probar fechas fijas
+# start_date = tz.localize( datetime(2026, 1, 1).replace(minute=0, second=0, microsecond=0))
+# end_date = tz.localize( datetime(2026, 1, 8).replace(minute=0, second=0, microsecond=0))
+
 rango = {
     "start_date": start_date.isoformat(),
     "end_date": end_date.isoformat(),
 }
-
+#==========================
+# Generar rangos de fines de semana
+#==========================
+weekends = []
+for d in pd.date_range(start_date, end_date):
+    if d.weekday() >= 5:  # 5 = sábado, 6 = domingo
+        start = pd.Timestamp(d).normalize()
+        end = start + pd.Timedelta(days=1)
+        weekends.append((start, end))
+#==========================
+# Generar lista de días festivos en España para el rango de fechas
+#==========================
+years = list(range(start_date.year, end_date.year + 1))
+festivos= holidays.country_holidays("ES", years=years)
+festivos = pd.to_datetime(list(festivos.keys())).normalize()
+# Rango del eje X (pueden venir como date, datetime o string) 
+start_date = pd.to_datetime(start_date).tz_localize(None).normalize() 
+end_date = pd.to_datetime(end_date).tz_localize(None).normalize()
+festivos = festivos[(festivos >= start_date) & (festivos <= end_date)]
+#========================
+# Descargar datos de cada indicador
+#========================
 eolica = get_indicator(IND_EO, rango)[["datetime", "value"]].rename(columns={"value": "eolica"})
 solar = get_indicator(IND_PV, rango)[["datetime", "value"]].rename(columns={"value": "solar"})
 demanda = get_indicator(IND_DEM, rango)[["datetime", "value"]].rename(columns={"value": "demanda"})
 spot = get_indicator(IND_SPOT, rango)
 spot = spot[spot['geo_name'] == 'España'] #solo valores de Peninsula
 spot = spot[["datetime", "value"]].rename(columns={"value": "precio_spot"})
-
+#=========================
+# Combinar datos en un solo DataFrame
+#=========================
 df_final = eolica.merge(solar, on="datetime", how="outer").merge(demanda, on="datetime", how="outer").merge(spot, on="datetime", how="outer")
 df_final["renovable"] = df_final["eolica"] + df_final["solar"]
 df_final["precio_estimado"] = (df_final["renovable"] / df_final["demanda"] * (-144.27) + 127.12)
-
-#Area de heatmap de precios
+#==========================
+# Datos historicos de precios spot para heatmap
+#==========================
 df = pd.read_csv("spot.csv", sep=";", encoding="utf-8-sig")
 df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-
-#df = df.sort_values("datetime").reset_index(drop=True)  # Asegura orden cronológico
-
+#==========================
+# Prepara datos para heatmap
+#==========================
 df["date"] = df["datetime"].dt.date
 df["hour"] = df["datetime"].dt.hour
-
 df_pivot = df.pivot(index="date", columns="hour", values="value")
 df_pivot = df_pivot.fillna(0)
 df_pivot = df_pivot.sort_index()  # Asegura orden por fecha
@@ -94,13 +124,19 @@ cambios_estacion = [
     (9, 22),   # otoño
     (12, 21)   # invierno
 ]
-
-# Posiciones en el eje Y
+# Posiciones en el eje Y de los cambios de estación
 fechas_cambio = []
 for mes, dia in cambios_estacion:
     coincidencias = [f for f in fechas if f.month == mes and f.day == dia]
     fechas_cambio.extend(coincidencias)
 
+#===========================
+# Datos de salida y puesta del sol para superponer en el heatmap
+#===========================
+df_sun = getSunData(date(2024, 1, 1), date(2025, 12, 31), 15)
+#===========================
+# Gráfico de heatmap con Plotly y superposición de líneas y puntos
+#===========================
 fig_heat = px.imshow(
     df_pivot.values,
     x=df_pivot.columns,
@@ -115,15 +151,15 @@ fig_heat.update_yaxes(tickvals=ticks_mes,
                       ticktext=[d.strftime("%Y-%m-%d") for d in ticks_mes])
 
 fig_heat.update_xaxes(tickmode="linear", tick0=0, dtick=1)
-
 fig_heat.update_layout(
     height=900,
     xaxis_title="Hora del día",
     yaxis_title="Fecha",
     yaxis=dict(autorange="reversed")  # fechas arriba → abajo
 )
-
-# Añadir líneas horizontales
+#===========================
+# Añadir líneas horizontales en los cambios de estación
+#===========================
 for f in fechas_cambio:
     fig_heat.add_hline(
         y=f,
@@ -131,7 +167,25 @@ for f in fechas_cambio:
         line_dash="solid",
         line_color="red"
     )
-
+#==========================
+# PUNTOS DE SALIDA DEL SOL
+#==========================
+fig_heat.add_trace(go.Scatter(
+    x=df_sun["sunrise_hour"],
+    y=df_sun["date"],
+    mode="lines",
+    line=dict(color="orange", width=3), 
+    name="Salida del sol" 
+)) 
+#==========================
+# PUNTOS DE PUESTA DEL SOL
+#==========================
+fig_heat.add_trace(go.Scatter(
+    x=df_sun["sunset_hour"], 
+    y=df_sun["date"], 
+    mode="lines", 
+    line=dict(color="black", width=3), 
+    name="Puesta del sol" ))
 # =========================
 # DEFINICION UI
 # =========================
@@ -202,6 +256,24 @@ with tab_curvas:
             yaxis_title="MWh",
             hovermode="x unified"
         )
+        fig_energia.update_xaxes( dtick="D1", tickangle=45)
+
+        # Añadir rectángulos en los fines de semana
+        for start, end in weekends:
+            fig_energia.add_vrect(
+                x0=start, x1=end,
+                fillcolor="lightgrey",
+                opacity=0.25,
+                line_width=0
+            )
+        # Añadir rectángulos en los días festivos
+        for festivo in festivos:
+            fig_energia.add_vrect(
+                x0=festivo, x1=festivo + pd.Timedelta(days=1),
+                fillcolor="indianred",
+                opacity=0.25,
+                line_width=0
+            )
         st.plotly_chart(fig_energia, width='stretch')
 
 # =========================
@@ -224,6 +296,16 @@ with tab_curvas:
         yaxis_title="€/MWh",
         hovermode="x unified"
     )
+    fig_precios.update_xaxes( dtick="D1", tickangle=45)
+
+    # Añadir rectángulos en los fines de semana
+    for start, end in weekends:
+        fig_precios.add_vrect(
+            x0=start, x1=end,
+            fillcolor="lightgrey",
+            opacity=0.25,
+            line_width=0
+        )
     st.plotly_chart(fig_precios, width='stretch')
 
 
