@@ -1,5 +1,4 @@
 from email.policy import default
-from matplotlib import dates
 import requests
 import pandas as pd
 from datetime import date, datetime, timedelta
