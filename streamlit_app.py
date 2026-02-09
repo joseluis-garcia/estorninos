@@ -33,7 +33,7 @@ headers = {
 }
 
 # =========================
-# FUNCIÓN DE DESCARGA
+# FUNCIÓN DE DESCARGA indicadores ESIOS
 # =========================
 def get_indicator(indicator_id, date_range):
     url = f"{BASE_URL}/{indicator_id}"
@@ -101,19 +101,60 @@ df_final["precio_estimado"] = (df_final["renovable"] / df_final["demanda"] * (-1
 #==========================
 # Datos historicos de precios spot para heatmap
 #==========================
-df = pd.read_csv("spot.csv", sep=";", encoding="utf-8-sig")
-df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+df_spot = pd.read_csv("spot.csv", sep=";", encoding="utf-8-sig")
+df_spot["datetime"] = pd.to_datetime(df_spot["datetime"], utc=True)
+df_spot["date"] = df_spot["datetime"].dt.date
+df_spot["hour"] = df_spot["datetime"].dt.hour
 #==========================
-# Prepara datos para heatmap
+# Datos historicos de temperaturas para heatmap
 #==========================
-df["date"] = df["datetime"].dt.date
-df["hour"] = df["datetime"].dt.hour
-df_pivot = df.pivot(index="date", columns="hour", values="value")
-df_pivot = df_pivot.fillna(0)
-df_pivot = df_pivot.sort_index()  # Asegura orden por fecha
-df_pivot.index = pd.to_datetime(df_pivot.index)
+df_temp = pd.read_csv(
+    "temperaturas.csv",
+    sep=";", 
+    encoding="utf-8-sig",
+    parse_dates=["datetime"],
+    dayfirst=True,               # importante para formato europeo
+    date_format="%d/%m/%Y %H:%M"
+)
 
-fechas = pd.to_datetime(df_pivot.index).sort_values().unique()
+print("Datos de temperaturas\n", df_temp.head())
+df_temp["datetime"] = pd.to_datetime(df_temp["datetime"])
+df_temp["date"] = df_temp["datetime"].dt.date
+df_temp["hour"] = df_temp["datetime"].dt.hour
+#==========================
+# Define la temperatura umbral para considerar un día como frío y generar matriz de días fríos para superponer en el heatmap
+#==========================
+# umbral = st.number_input("Umbral de temperatura", value=5.0)
+# df_temp["is_cold"] = df_temp["temperatura"] < umbral
+# cold_matrix = df_temp.pivot_table(
+#     index="date",
+#     columns="hour",
+#     values="is_cold",
+#     aggfunc="max"   # si hay varios registros por hora, basta con que uno sea frío
+# )
+# cold_x = cold_matrix.columns.astype(int)
+# cold_y = pd.to_datetime(cold_matrix.index).sort_values().unique()
+# cold_z = cold_matrix.fillna(0).astype(int).values
+
+#cold_z = cold_matrix.astype(int).values
+# cold_x = pd.to_datetime(cold_matrix.columns)
+# cold_y = cold_matrix.index.astype(int)
+cold_matrix = df_temp.pivot(
+    index="date",
+    columns="hour",
+    values="temperatura",
+)
+cold_matrix = cold_matrix.fillna(0)
+cold_matrix = cold_matrix.sort_index()  # Asegura orden por fecha
+cold_matrix.index = pd.to_datetime(cold_matrix.index)
+#==========================
+# Prepara datos spot para heatmap
+#==========================
+price_matrix = df_spot.pivot(index="date", columns="hour", values="value")
+price_matrix = price_matrix.fillna(0)
+price_matrix = price_matrix.sort_index()  # Asegura orden por fecha
+price_matrix.index = pd.to_datetime(price_matrix.index)
+fechas = pd.to_datetime(price_matrix.index).sort_values().unique()
 ticks_mes = [f for f in fechas if f.day == 1]
 
 # Cambios de estación sin año
@@ -128,29 +169,47 @@ fechas_cambio = []
 for mes, dia in cambios_estacion:
     coincidencias = [f for f in fechas if f.month == mes and f.day == dia]
     fechas_cambio.extend(coincidencias)
-
 #===========================
 # Datos de salida y puesta del sol para superponer en el heatmap
 #===========================
 df_sun = getSunData(date(2024, 1, 1), date(2025, 12, 31), 15)
 #===========================
-# Gráfico de heatmap con Plotly y superposición de líneas y puntos
+# Gráfico de heatmap de precios con Plotly
 #===========================
-fig_heat = px.imshow(
-    df_pivot.values,
-    x=df_pivot.columns,
-    y=df_pivot.index.strftime("%Y-%m-%d"),  # convierte fechas a string
+fig_temperaturas = px.imshow(
+    cold_matrix.values,
+    x=cold_matrix.columns,
+    y=cold_matrix.index.strftime("%Y-%m-%d"),  # convierte fechas a string
+    labels=dict(x="Hora", y="Fecha", color="Valor"),
+    aspect="auto",
+    color_continuous_scale="RdBu_r"
+)
+fig_temperaturas.update_yaxes(tickvals=ticks_mes,
+                      tickmode="array",
+                      ticktext=[d.strftime("%Y-%m-%d") for d in ticks_mes])
+
+fig_temperaturas.update_xaxes(tickmode="linear", tick0=0, dtick=1)
+fig_temperaturas.update_layout(
+    height=900,
+    xaxis_title="Hora del día",
+    yaxis_title="Fecha",
+    yaxis=dict(autorange="reversed")  # fechas arriba → abajo
+)
+# Convierte el índice datetime a string para que Plotly lo muestre
+fig_precios = px.imshow(
+    price_matrix.values,
+    x=price_matrix.columns,
+    y=price_matrix.index.strftime("%Y-%m-%d"),  # convierte fechas a string
     labels=dict(x="Hora", y="Fecha", color="Valor"),
     aspect="auto",
     color_continuous_scale="Turbo"
 )
-# Convierte el índice datetime a string para que Plotly lo muestre
-fig_heat.update_yaxes(tickvals=ticks_mes,
+fig_precios.update_yaxes(tickvals=ticks_mes,
                       tickmode="array",
                       ticktext=[d.strftime("%Y-%m-%d") for d in ticks_mes])
 
-fig_heat.update_xaxes(tickmode="linear", tick0=0, dtick=1)
-fig_heat.update_layout(
+fig_precios.update_xaxes(tickmode="linear", tick0=0, dtick=1)
+fig_precios.update_layout(
     height=900,
     xaxis_title="Hora del día",
     yaxis_title="Fecha",
@@ -160,7 +219,7 @@ fig_heat.update_layout(
 # Añadir líneas horizontales en los cambios de estación
 #===========================
 for f in fechas_cambio:
-    fig_heat.add_hline(
+    fig_precios.add_hline(
         y=f,
         line_width=3,
         line_dash="solid",
@@ -169,7 +228,7 @@ for f in fechas_cambio:
 #==========================
 # PUNTOS DE SALIDA DEL SOL
 #==========================
-fig_heat.add_trace(go.Scatter(
+fig_precios.add_trace(go.Scatter(
     x=df_sun["sunrise_hour"],
     y=df_sun["date"],
     mode="lines",
@@ -179,12 +238,58 @@ fig_heat.add_trace(go.Scatter(
 #==========================
 # PUNTOS DE PUESTA DEL SOL
 #==========================
-fig_heat.add_trace(go.Scatter(
+fig_precios.add_trace(go.Scatter(
     x=df_sun["sunset_hour"], 
     y=df_sun["date"], 
     mode="lines", 
     line=dict(color="black", width=3), 
     name="Puesta del sol" ))
+
+#==========================
+# Dias fríos superpuestos como un heatmap semitransparente
+#==========================
+# fig_precios.add_trace(
+#     go.Heatmap(
+#         z=cold_matrix.values,
+#         x=cold_matrix.columns,
+#         y=cold_matrix.index,
+#         colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,255,1)"]],
+#         showscale=True,
+#         hoverinfo="skip"
+#     )
+# )
+# fig_precios.add_trace(
+#     go.Heatmap( 
+#         z=cold_z,
+#         x=cold_x,
+#         y=cold_y, 
+#         colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,255,0,0.30)"]],
+#         showscale=False, 
+#         hoverinfo="skip" 
+#         )
+# )
+# print("Añadiendo días fríos al heatmap")
+# fig_precios.add_trace(
+#     go.Contour(
+#         z=cold_z,
+#         x=cold_x,
+#         y=cold_y,
+#         contours=dict(
+#             start=0.5,
+#             end=0.5,
+#             size=1,
+#             coloring="none"   # solo líneas, sin relleno
+#         ),
+#         line=dict(
+#             width=2,
+#             color="rgba(255, 255, 255, 0.9)"  # color del contorno
+#         ),
+#         showscale=False,
+#         hoverinfo="skip"
+#     )
+# )
+
+
 # =========================
 # DEFINICION UI
 # =========================
@@ -223,7 +328,7 @@ st.markdown("""
 
 st.title("Visualización de variables ESIOS")
 
-tab_curvas, tab_heatmap = st.tabs(["Curvas", "Heatmap"])
+tab_curvas, tab_precios, tab_temperaturas = st.tabs(["Curvas", "Precios", "Temperaturas"])
 
 with tab_curvas:
     # Rango de fechas
@@ -281,8 +386,8 @@ with tab_curvas:
     st.subheader("Predicción Precios")
     df_precios = df_final.melt(id_vars="datetime", value_vars=["precio_estimado", "precio_spot"],
                         var_name="variable", value_name="valor")
-    fig_precios = px.line(df_precios, x="datetime", y="valor", color="variable")
-    fig_precios.update_layout(
+    fig_estimacion = px.line(df_precios, x="datetime", y="valor", color="variable")
+    fig_estimacion.update_layout(
         legend=dict(
             orientation="h",          # horizontal
             yanchor="top",
@@ -295,20 +400,24 @@ with tab_curvas:
         yaxis_title="€/MWh",
         hovermode="x unified"
     )
-    fig_precios.update_xaxes( dtick="D1", tickangle=45)
+    fig_estimacion.update_xaxes( dtick="D1", tickangle=45)
 
     # Añadir rectángulos en los fines de semana
     for start, end in weekends:
-        fig_precios.add_vrect(
+        fig_estimacion.add_vrect(
             x0=start, x1=end,
             fillcolor="lightgrey",
             opacity=0.25,
             line_width=0
         )
-    st.plotly_chart(fig_precios, width='stretch')
+    st.plotly_chart(fig_estimacion, width='stretch', key="estimacion")
 
 
-with tab_heatmap:
+with tab_precios:
     st.subheader("Mapa de precios spot histórico")
-    st.plotly_chart(fig_heat, width='stretch')
+    st.plotly_chart(fig_precios, width='stretch', key="precios")
+
+with tab_temperaturas:
+    st.subheader("Mapa de temperaturas históricas")
+    st.plotly_chart(fig_temperaturas, width='stretch', key="temperaturas")
 
