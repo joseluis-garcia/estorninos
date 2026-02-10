@@ -1,3 +1,4 @@
+import streamlit as st
 import ephem
 import pandas as pd
 from datetime import date, timedelta
@@ -9,7 +10,7 @@ from datetime import date, timedelta
 # delta: intervalo en días
 # return: dataframe con columnas "date", "sunrise_hour" y "sunset_hour"
 # =========================
-
+@st.cache_data
 def getSunData( start, end, delta):
     # Coordenadas de Madrid
     lat = '40.4165'
