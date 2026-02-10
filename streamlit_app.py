@@ -117,7 +117,6 @@ df_temp = pd.read_csv(
     date_format="%d/%m/%Y %H:%M"
 )
 
-print("Datos de temperaturas\n", df_temp.head())
 df_temp["datetime"] = pd.to_datetime(df_temp["datetime"])
 df_temp["date"] = df_temp["datetime"].dt.date
 df_temp["hour"] = df_temp["datetime"].dt.hour
@@ -233,7 +232,8 @@ fig_precios.add_trace(go.Scatter(
     y=df_sun["date"],
     mode="lines",
     line=dict(color="orange", width=3), 
-    name="Salida del sol" 
+    name="Salida del sol", 
+    showlegend=False
 )) 
 #==========================
 # PUNTOS DE PUESTA DEL SOL
@@ -243,7 +243,20 @@ fig_precios.add_trace(go.Scatter(
     y=df_sun["date"], 
     mode="lines", 
     line=dict(color="black", width=3), 
-    name="Puesta del sol" ))
+    name="Puesta del sol",
+    showlegend=False
+))  
+
+# fig_precios.update_layout(
+#     legend=dict(
+#         orientation="h",
+#         yanchor="bottom",
+#         y=1.02,
+#         xanchor="left",
+#         x=0
+#     )
+# )
+
 
 #==========================
 # Dias fríos superpuestos como un heatmap semitransparente
@@ -325,10 +338,11 @@ st.markdown("""
 
 </style>
 """, unsafe_allow_html=True)
+st.set_page_config(layout="wide")
 
 st.title("Visualización de variables ESIOS")
 
-tab_curvas, tab_precios, tab_temperaturas = st.tabs(["Curvas", "Precios", "Temperaturas"])
+tab_curvas, tab_precios, tab_temperaturas, tab_summary = st.tabs(["Curvas", "Precios", "Temperaturas", "Resumen"])
 
 with tab_curvas:
     # Rango de fechas
@@ -420,4 +434,22 @@ with tab_precios:
 with tab_temperaturas:
     st.subheader("Mapa de temperaturas históricas")
     st.plotly_chart(fig_temperaturas, width='stretch', key="temperaturas")
+
+with tab_summary:
+    common_layout = dict( height=400, margin=dict(l=0, r=0, t=40, b=40) )
+    fig_precios.update_layout(**common_layout) 
+    fig_temperaturas.update_layout(**common_layout) 
+    # fig_precios.update_coloraxes(showscale=False) 
+    # fig_temperaturas.update_coloraxes(showscale=False)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Precios")
+        st.plotly_chart(fig_precios, width='stretch', key="hm1")
+
+    with col2:
+        st.subheader("Temperaturas")
+        st.plotly_chart(fig_temperaturas, width='stretch', key="hm2")
+
+
 
