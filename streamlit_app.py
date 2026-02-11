@@ -229,6 +229,8 @@ with tab_curvas:
                 opacity=0.25,
                 line_width=0
             )
+        fig_energia.add_vline(x=today, line_width=4, line_dash="dash", line_color="green", name="Hoy")
+
         st.plotly_chart(fig_energia, width='stretch')
 
 # =========================
@@ -261,6 +263,7 @@ with tab_curvas:
             opacity=0.25,
             line_width=0
         )
+    fig_estimacion.add_vline(x=today, line_width=4, line_dash="dash", line_color="green", name="Hoy")
     st.plotly_chart(fig_estimacion, width='stretch', key="estimacion")
 
 
@@ -326,5 +329,6 @@ with tab_summary:
     )
 
     # Mostrar en Streamlit
-    st.plotly_chart(fig_comb, use_container_width=True)
+    st.subheader("Mapa de temperaturas y precios históricos")
+    st.plotly_chart(fig_comb, width='stretch', key="resumen")
 
