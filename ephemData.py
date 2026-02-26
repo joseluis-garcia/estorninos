@@ -26,7 +26,6 @@ def getSunData( start, end, delta):
 
     while d <= end:
         madrid.date = d
-
         sunrise = madrid.next_rising(ephem.Sun()).datetime()
         sunset  = madrid.next_setting(ephem.Sun()).datetime()
 

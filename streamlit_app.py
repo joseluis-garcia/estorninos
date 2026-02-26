@@ -1,4 +1,4 @@
-from email.policy import default
+
 import requests
 import pandas as pd
 from datetime import date, datetime, timedelta
@@ -9,6 +9,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from historico_temperaturas import load_historico_temperaturas
 from historico_spot import load_historico_precios_spot
+from historico_peajes_cargos import load_historico_peajes
+from costes_regulados import costes_regulados
 import holidays 
 
 # =========================
@@ -126,20 +128,30 @@ start_date = pd.to_datetime(start_date).tz_localize(None).normalize()
 end_date = pd.to_datetime(end_date).tz_localize(None).normalize()
 festivos = festivos[(festivos >= start_date) & (festivos <= end_date)]
 #========================
-# Descargar datos de cada indicador
+# Descargar datos de cada indicador de energia
 #========================
 eolica = get_indicator(IND_EO, rango)[["datetime", "value"]].rename(columns={"value": "eolica"})
 solar = get_indicator(IND_PV, rango)[["datetime", "value"]].rename(columns={"value": "solar"})
 demanda = get_indicator(IND_DEM, rango)[["datetime", "value"]].rename(columns={"value": "demanda"})
+#========================
+# Descargar datos de precios spot
+#========================
 spot = get_indicator(IND_SPOT, rango)
 spot = spot[spot['geo_name'] == 'España'] #solo valores de Peninsula
 spot = spot[["datetime", "value"]].rename(columns={"value": "precio_spot"})
+spot = costes_regulados(spot, "datetime") #añade columnas de periodo, peaje, cargo, capacidad y coste_regulado
+spot["precio_final"] = spot["precio_spot"] + spot["coste_regulado"] * 1000  # convertir €/kWh a €/MWh
 #=========================
 # Combinar datos en un solo DataFrame
 #=========================
 df_final = eolica.merge(solar, on="datetime", how="outer").merge(demanda, on="datetime", how="outer").merge(spot, on="datetime", how="outer")
+df_final = df_final.dropna(subset=["eolica", "solar", "demanda"])
 df_final["renovable"] = df_final["eolica"] + df_final["solar"]
-df_final["precio_estimado"] = (df_final["renovable"] / df_final["demanda"] * (-144.27) + 127.12)
+
+df_final = costes_regulados(df_final, "datetime") #añade columnas de periodo, peaje, cargo, capacidad y coste_regulado
+df_final["precio_final"] = df_final["precio_spot"] + df_final["coste_regulado"] * 1000  # convertir €/kWh a €/MWh
+
+df_final["precio_estimado"] = (df_final["renovable"] / df_final["demanda"] * (-144.27) + 127.12) + df_final["coste_regulado"] * 1000  # modelo lineal + coste regulado
 
 # =========================
 # DEFINICION UI
@@ -218,7 +230,7 @@ with tab_curvas:
             fig_energia.add_vrect(
                 x0=start, x1=end,
                 fillcolor="lightgrey",
-                opacity=0.25,
+                opacity=0.1,
                 line_width=0
             )
         # Añadir rectángulos en los días festivos
@@ -226,7 +238,7 @@ with tab_curvas:
             fig_energia.add_vrect(
                 x0=festivo, x1=festivo + pd.Timedelta(days=1),
                 fillcolor="indianred",
-                opacity=0.25,
+                opacity=0.1,
                 line_width=0
             )
         fig_energia.add_vline(x=today, line_width=4, line_dash="dash", line_color="green", name="Hoy")
@@ -237,7 +249,7 @@ with tab_curvas:
 # Prepara gráfico de precios
 # =========================
     st.subheader("Predicción Precios")
-    df_precios = df_final.melt(id_vars="datetime", value_vars=["precio_estimado", "precio_spot"],
+    df_precios = df_final.melt(id_vars="datetime", value_vars=["precio_estimado", "precio_final"],
                         var_name="variable", value_name="valor")
     fig_estimacion = px.line(df_precios, x="datetime", y="valor", color="variable")
     fig_estimacion.update_layout(
@@ -260,7 +272,15 @@ with tab_curvas:
         fig_estimacion.add_vrect(
             x0=start, x1=end,
             fillcolor="lightgrey",
-            opacity=0.25,
+            opacity=0.1,
+            line_width=0
+        )
+    # Añadir rectángulos en los días festivos
+    for festivo in festivos:
+        fig_estimacion.add_vrect(
+            x0=festivo, x1=festivo + pd.Timedelta(days=1),
+            fillcolor="indianred",
+            opacity=0.1,
             line_width=0
         )
     fig_estimacion.add_vline(x=today, line_width=4, line_dash="dash", line_color="green", name="Hoy")
@@ -271,6 +291,11 @@ with tab_precios:
     fig_precios, ticks_mes = load_historico_precios_spot(True, True)
     st.subheader("Mapa de precios spot histórico")
     st.plotly_chart(fig_precios, width='stretch', key="precios")
+
+# with tab_peajes:
+#     fig_peajes, ticks_mes = load_historico_peajes(True, True)
+#     st.subheader("Mapa de peajes y cargos histórico")
+#     st.plotly_chart(fig_peajes, width='stretch', key="peajes")
 
 with tab_temperaturas:
     fig_temperaturas, ticks_mes = load_historico_temperaturas(True, True)
